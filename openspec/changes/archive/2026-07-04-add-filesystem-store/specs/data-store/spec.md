@@ -1,10 +1,4 @@
-# data-store Specification
-
-## Purpose
-
-Filesystem persistence of the catalog and trips, owned by a backend process, plus JSON export/import for backup and version control.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Persist catalog and trips on the local filesystem
 
@@ -91,3 +85,20 @@ data as chosen.
   schema
 - **THEN** the system rejects the import, reports the problem, and leaves the existing
   on-disk data unchanged
+
+## REMOVED Requirements
+
+### Requirement: Repo-committed JSON as portable source of truth
+
+**Reason**: The dedicated on-disk `data/` folder (with its `places/`, `routes/`, and
+`trips/` files) is now itself the version-controllable source of truth, so a separate
+bundled seed file loaded only when browser storage is empty is no longer needed.
+
+**Migration**: Seed the catalog by placing entity JSON files directly in the `data/`
+subfolders (or by importing an exported JSON document), rather than relying on a bundled
+`places.seed.json` loaded into browser storage on first run.
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Persist catalog and trips in the browser`
+- TO: `### Requirement: Persist catalog and trips on the local filesystem`

@@ -68,6 +68,32 @@ declare global {
       ): void;
     }
 
+    /** POI local search — returns multiple candidate results for a keyword. */
+    class LocalSearch {
+      constructor(
+        location: Map | Point | string,
+        opts?: {
+          onSearchComplete?: (results: LocalSearchResult) => void;
+          pageCapacity?: number;
+          renderOptions?: { map?: Map; autoViewport?: boolean };
+        },
+      );
+      search(keyword: string): void;
+      getStatus(): number;
+    }
+
+    interface LocalSearchResult {
+      getCurrentNumPois(): number;
+      getPoi(index: number): LocalSearchPoi;
+    }
+
+    interface LocalSearchPoi {
+      title: string;
+      point: Point;
+      address?: string;
+      city?: string;
+    }
+
     const BMAP_STATUS_SUCCESS: number;
 
     class DrivingRoute {

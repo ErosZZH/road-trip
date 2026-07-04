@@ -1,14 +1,20 @@
 import { useAppStore } from '../store/appStore';
-import type { Place } from '../types';
+import type { CatalogEntity } from '../types';
 
-/** Floating detail card for the currently-selected place (shown over the map). */
+/** Floating detail card for the currently-selected place/route (shown over the map). */
 export function PlaceDetail() {
   const selectedId = useAppStore((s) => s.selectedPlaceId);
-  const place = useAppStore((s) => s.places.find((p) => p.id === s.selectedPlaceId));
+  const place = useAppStore((s) =>
+    [...s.places, ...s.routes].find((p) => p.id === s.selectedPlaceId),
+  );
   const selectPlace = useAppStore((s) => s.selectPlace);
   const addToTrip = useAppStore((s) => s.addToTrip);
   const removeFromTrip = useAppStore((s) => s.removeFromTrip);
-  const inTrip = useAppStore((s) => (selectedId ? s.tripSelection.includes(selectedId) : false));
+  const inTrip = useAppStore((s) =>
+    selectedId
+      ? s.tripSelection.includes(selectedId) || s.tripRouteSelection.includes(selectedId)
+      : false,
+  );
 
   if (!place) return null;
 
@@ -60,7 +66,7 @@ export function PlaceDetail() {
   );
 }
 
-function CoordSummary({ place }: { place: Place }) {
+function CoordSummary({ place }: { place: CatalogEntity }) {
   if (place.kind === 'destination') {
     return (
       <span className="muted">

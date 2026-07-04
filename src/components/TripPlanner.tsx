@@ -13,9 +13,9 @@ function formatDuration(seconds: number): string {
 }
 
 function Metrics({ metrics }: { metrics: RouteMetrics }) {
-  const places = useAppStore((s) => s.places);
+  const entities = useAppStore((s) => [...s.places, ...s.routes]);
   const label = (id: string): string =>
-    id === '@home' ? '🏠 家' : (places.find((p) => p.id === id)?.name ?? id);
+    id === '@home' ? '🏠 家' : (entities.find((p) => p.id === id)?.name ?? id);
 
   return (
     <div className="stack">
@@ -37,7 +37,9 @@ function Metrics({ metrics }: { metrics: RouteMetrics }) {
 /** Trip planning panel: selection, constraints, optimize, metrics, save/open. */
 export function TripPlanner() {
   const selection = useAppStore((s) => s.tripSelection);
+  const routeSelection = useAppStore((s) => s.tripRouteSelection);
   const places = useAppStore((s) => s.places);
+  const routes = useAppStore((s) => s.routes);
   const constraints = useAppStore((s) => s.constraints);
   const allTags = useAppStore(selectAllTags);
   const planning = useAppStore((s) => s.planning);
@@ -57,15 +59,17 @@ export function TripPlanner() {
   const [tripName, setTripName] = useState('');
   const [constraintTag, setConstraintTag] = useState('');
 
-  const selectedPlaces = selection
-    .map((id) => places.find((p) => p.id === id))
-    .filter(Boolean);
+  const totalSelected = selection.length + routeSelection.length;
+  const selectedPlaces = [
+    ...selection.map((id) => places.find((p) => p.id === id)),
+    ...routeSelection.map((id) => routes.find((r) => r.id === id)),
+  ].filter(Boolean);
 
   return (
     <div className="card stack">
       <p className="section-title">行程规划</p>
 
-      {selection.length === 0 ? (
+      {totalSelected === 0 ? (
         <p className="muted">从列表或地图中加入地点，即可规划环线。</p>
       ) : (
         <div className="stack">
@@ -132,12 +136,12 @@ export function TripPlanner() {
         <button
           type="button"
           className="primary"
-          disabled={planning || selection.length === 0}
+          disabled={planning || totalSelected === 0}
           onClick={() => void planTrip()}
         >
           {planning ? '规划中…' : '规划环线'}
         </button>
-        {selection.length > 0 && (
+        {totalSelected > 0 && (
           <button type="button" onClick={clearTripSelection}>
             清空
           </button>
@@ -162,7 +166,7 @@ export function TripPlanner() {
             <button
               type="button"
               onClick={() => {
-                saveTrip(tripName);
+                void saveTrip(tripName);
                 setTripName('');
               }}
             >
@@ -186,7 +190,7 @@ export function TripPlanner() {
                 {t.name}
                 {t.needsReview ? <span className="badge-wishlist"> · 待检查</span> : null}
               </button>
-              <button type="button" className="danger" onClick={() => deleteTrip(t.id)}>
+              <button type="button" className="danger" onClick={() => void deleteTrip(t.id)}>
                 ×
               </button>
             </div>

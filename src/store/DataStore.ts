@@ -1,77 +1,88 @@
-import type { CatalogData } from '../types';
-import {
-  emptyCatalog,
-  mergeCatalogs,
-  parseCatalog,
-  serializeCatalog,
-  type ParseResult,
-} from './catalogSchema';
-
-const DB_NAME = 'road-trip-planner';
-const STORE_NAME = 'catalog';
-const RECORD_KEY = 'main';
-const LS_KEY = 'road-trip-planner:catalog';
+import type { CatalogData, Place, Route, Trip } from '../types';
+import { emptyCatalog, parseCatalog, serializeCatalog, type ParseResult } from './catalogSchema';
 
 /**
- * Persists the catalog (places + trips). IndexedDB is the primary backend;
- * localStorage is a fallback when IndexedDB is unavailable (private mode,
- * old browsers). Also handles JSON export/import and seeding from a bundled
- * catalog when storage is empty (design.md decision #6).
+ * Client for the standalone data server (design.md decision #1/#4). All places,
+ * routes, and trips live in files on disk owned by the backend; this class is
+ * the frontend's only persistence path. No IndexedDB, no localStorage.
  */
+
+const API = '/api';
+
+async function jsonOrThrow<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let message = `请求失败（${res.status}）。`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      // non-JSON error body; keep the generic message
+    }
+    throw new Error(message);
+  }
+  return (await res.json()) as T;
+}
+
 export class DataStore {
-  private idbAvailable: boolean;
-
-  constructor() {
-    this.idbAvailable = typeof indexedDB !== 'undefined';
+  /** Load the whole catalog from disk. */
+  async load(): Promise<CatalogData> {
+    const res = await fetch(`${API}/catalog`);
+    const data = await jsonOrThrow<CatalogData>(res);
+    // Normalize through the parser so older/partial files get sane defaults.
+    const parsed = parseCatalog(data);
+    return parsed.ok && parsed.data ? parsed.data : emptyCatalog();
   }
 
-  /** Load persisted data, or null if nothing is stored yet. */
-  async load(): Promise<CatalogData | null> {
-    if (this.idbAvailable) {
-      try {
-        return await this.idbLoad();
-      } catch {
-        this.idbAvailable = false; // fall through to localStorage
-      }
-    }
-    return this.lsLoad();
+  /** Create or update a place (upsert by id). Returns the persisted place. */
+  savePlace(place: Place): Promise<Place> {
+    return this.saveEntity('places', place);
   }
 
-  /** Persist the given catalog. */
-  async save(data: CatalogData): Promise<void> {
-    if (this.idbAvailable) {
-      try {
-        await this.idbSave(data);
-        return;
-      } catch {
-        this.idbAvailable = false;
-      }
-    }
-    this.lsSave(data);
+  /** Create or update a route (upsert by id). Returns the persisted route. */
+  saveRoute(route: Route): Promise<Route> {
+    return this.saveEntity('routes', route);
   }
 
-  /**
-   * Resolve the initial catalog: stored data → bundled seed → empty.
-   * Persists the seed so subsequent loads are stable.
-   */
-  async loadInitial(seed?: CatalogData): Promise<CatalogData> {
-    const stored = await this.load();
-    if (stored) return stored;
-    if (seed) {
-      await this.save(seed);
-      return seed;
-    }
-    return emptyCatalog();
+  /** Create or update a trip (upsert by id). Returns the persisted trip. */
+  saveTrip(trip: Trip): Promise<Trip> {
+    return this.saveEntity('trips', trip);
   }
 
-  /** Produce a downloadable JSON string of the catalog. */
-  export(data: CatalogData): string {
+  deletePlace(id: string): Promise<void> {
+    return this.deleteEntity('places', id);
+  }
+
+  deleteRoute(id: string): Promise<void> {
+    return this.deleteEntity('routes', id);
+  }
+
+  deleteTrip(id: string): Promise<void> {
+    return this.deleteEntity('trips', id);
+  }
+
+  /** Fetch a fresh export document from the server and serialize it for download. */
+  async export(): Promise<string> {
+    const res = await fetch(`${API}/export`);
+    const data = await jsonOrThrow<CatalogData>(res);
     return serializeCatalog(data);
   }
 
   /**
-   * Parse an imported JSON string. Returns a ParseResult; on success the
-   * caller decides whether to replace or merge. Never throws on bad input.
+   * Send an imported catalog to the server, replacing or merging on disk.
+   * Returns the resulting catalog as persisted.
+   */
+  async import(data: CatalogData, mode: 'replace' | 'merge'): Promise<CatalogData> {
+    const res = await fetch(`${API}/import?mode=${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: serializeCatalog(data),
+    });
+    return jsonOrThrow<CatalogData>(res);
+  }
+
+  /**
+   * Parse an imported JSON string client-side before sending, so an invalid
+   * file is rejected without touching the server. Never throws on bad input.
    */
   parseImport(json: string): ParseResult {
     let raw: unknown;
@@ -83,73 +94,27 @@ export class DataStore {
     return parseCatalog(raw);
   }
 
-  /** Merge an imported catalog into an existing one (incoming wins on id clash). */
-  merge(base: CatalogData, incoming: CatalogData): CatalogData {
-    return mergeCatalogs(base, incoming);
-  }
-
-  // ---- IndexedDB backend ----
-
-  private openDb(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME);
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error ?? new Error('IndexedDB open failed'));
+  private async saveEntity<T extends { id: string }>(
+    collection: 'places' | 'routes' | 'trips',
+    entity: T,
+  ): Promise<T> {
+    const res = await fetch(`${API}/${collection}/${encodeURIComponent(entity.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entity),
     });
+    return jsonOrThrow<T>(res);
   }
 
-  private async idbLoad(): Promise<CatalogData | null> {
-    const db = await this.openDb();
-    try {
-      return await new Promise<CatalogData | null>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const req = tx.objectStore(STORE_NAME).get(RECORD_KEY);
-        req.onsuccess = () => resolve((req.result as CatalogData | undefined) ?? null);
-        req.onerror = () => reject(req.error ?? new Error('IndexedDB read failed'));
-      });
-    } finally {
-      db.close();
-    }
-  }
-
-  private async idbSave(data: CatalogData): Promise<void> {
-    const db = await this.openDb();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).put(data, RECORD_KEY);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error ?? new Error('IndexedDB write failed'));
-      });
-    } finally {
-      db.close();
-    }
-  }
-
-  // ---- localStorage fallback ----
-
-  private lsLoad(): CatalogData | null {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (!raw) return null;
-      const result = parseCatalog(JSON.parse(raw));
-      return result.ok && result.data ? result.data : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private lsSave(data: CatalogData): void {
-    try {
-      localStorage.setItem(LS_KEY, serializeCatalog(data));
-    } catch {
-      // Storage full or unavailable — nothing more we can do without a backend.
+  private async deleteEntity(
+    collection: 'places' | 'routes' | 'trips',
+    id: string,
+  ): Promise<void> {
+    const res = await fetch(`${API}/${collection}/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok && res.status !== 204) {
+      await jsonOrThrow(res);
     }
   }
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { hasBaiduAk } from '../config/home';
-import { useAppStore, selectFilteredPlaces } from '../store/appStore';
+import { useAppStore, selectFilteredEntities } from '../store/appStore';
 import { PlaceForm } from './PlaceForm';
 import { PlaceList } from './PlaceList';
 import { Filters } from './Filters';
@@ -10,8 +10,8 @@ import { DataControls } from './DataControls';
 /** Left panel: header, add-place form, filters, catalog list, trip planner, data I/O. */
 export function SidePanel() {
   const [adding, setAdding] = useState(false);
-  const filteredPlaces = useAppStore(selectFilteredPlaces);
-  const totalPlaces = useAppStore((s) => s.places.length);
+  const filteredPlaces = useAppStore(selectFilteredEntities);
+  const totalPlaces = useAppStore((s) => s.places.length + s.routes.length);
 
   return (
     <aside className="side-panel">

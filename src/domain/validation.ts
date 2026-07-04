@@ -1,4 +1,4 @@
-import type { BD09, Place, Rating, TagConstraint } from '../types';
+import type { BD09, CatalogEntity, PlaceStatus, Rating, TagConstraint } from '../types';
 
 export interface ValidationResult {
   valid: boolean;
@@ -27,14 +27,14 @@ export function isValidCoord(coord: unknown): coord is BD09 {
 }
 
 /**
- * Validate a place before it is stored.
+ * Validate a place or route before it is stored.
  * Rules (from specs/place-catalog):
  *  - name is required
  *  - a rating may only exist when status === 'visited', and must be 1..5
  *  - a destination requires a valid coord
- *  - a road requires both a valid entry and exit
+ *  - a route requires both a valid entry and exit
  */
-export function validatePlace(place: Partial<Place>): ValidationResult {
+export function validatePlace(place: Partial<CatalogEntity>): ValidationResult {
   const errors: string[] = [];
 
   if (!place.name || place.name.trim().length === 0) {
@@ -76,7 +76,7 @@ export function validatePlace(place: Partial<Place>): ValidationResult {
  * and reject out-of-range values by returning the provided fallback.
  */
 export function normalizeRating(
-  status: Place['status'],
+  status: PlaceStatus,
   rating: unknown,
   fallback?: Rating,
 ): Rating | undefined {
@@ -85,17 +85,20 @@ export function normalizeRating(
   return isValidRating(rating) ? rating : fallback;
 }
 
-/** Check a selection of places against a single tag constraint. */
-export function constraintSatisfied(places: Place[], constraint: TagConstraint): boolean {
+/** Check a selection of places/routes against a single tag constraint. */
+export function constraintSatisfied(
+  entities: CatalogEntity[],
+  constraint: TagConstraint,
+): boolean {
   if (constraint.type !== 'includesTag') return true;
-  const count = places.filter((p) => p.tags.includes(constraint.tag)).length;
+  const count = entities.filter((p) => p.tags.includes(constraint.tag)).length;
   return count >= constraint.min;
 }
 
 /** Returns the constraints a selection fails to satisfy (empty = all satisfied). */
 export function unsatisfiedConstraints(
-  places: Place[],
+  entities: CatalogEntity[],
   constraints: TagConstraint[],
 ): TagConstraint[] {
-  return constraints.filter((c) => !constraintSatisfied(places, c));
+  return constraints.filter((c) => !constraintSatisfied(entities, c));
 }

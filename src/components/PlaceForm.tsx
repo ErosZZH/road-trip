@@ -1,24 +1,34 @@
 import { useMemo, useState } from 'react';
-import type { BD09, Place, PlaceKind, PlaceStatus, Rating } from '../types';
+import type { BD09, CatalogEntity, PlaceKind, PlaceStatus, Rating } from '../types';
 import { validatePlace, normalizeRating } from '../domain/validation';
-import { useAppStore, selectAllTags, type NewPlaceInput } from '../store/appStore';
+import {
+  useAppStore,
+  selectAllTags,
+  type NewPlaceInput,
+  type NewRouteInput,
+} from '../store/appStore';
+import { getMapProvider } from '../map';
 import { TagInput } from './TagInput';
 import { RatingInput } from './RatingInput';
 import { LocationField } from './LocationField';
 
 interface PlaceFormProps {
-  /** When provided, the form edits this place; otherwise it adds a new one. */
-  editing?: Place;
+  /** When provided, the form edits this place/route; otherwise it adds a new one. */
+  editing?: CatalogEntity;
   onDone: () => void;
 }
 
 /**
- * Add/edit a place. Supports kind = destination (single location) or road
- * (entry + exit). Enforces validation before persisting via the store.
+ * Add/edit a place (destination) or route (scenic road). Locations are chosen by
+ * searching and picking a Baidu candidate — the name auto-fills from the pick and
+ * coordinates are never hand-entered (spec: place-catalog). For a route, the
+ * driving-path geometry between entry and exit is computed and stored on save.
  */
 export function PlaceForm({ editing, onDone }: PlaceFormProps) {
   const addPlace = useAppStore((s) => s.addPlace);
   const updatePlace = useAppStore((s) => s.updatePlace);
+  const addRoute = useAppStore((s) => s.addRoute);
+  const updateRoute = useAppStore((s) => s.updateRoute);
   const tagSuggestions = useAppStore(selectAllTags);
 
   const [kind, setKind] = useState<PlaceKind>(editing?.kind ?? 'destination');
@@ -39,12 +49,21 @@ export function PlaceForm({ editing, onDone }: PlaceFormProps) {
   );
 
   const [errors, setErrors] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
 
-  // Waypoints aren't edited via this form; preserve any existing ones so
-  // editing a road (e.g. renaming) doesn't strip its real path geometry.
+  // Preserve existing waypoints when editing a road so renaming doesn't strip
+  // its pinned path. The stored `path` is recomputed on save when endpoints change.
   const existingWaypoints = editing?.kind === 'road' ? editing.waypoints : undefined;
+  const existingEntry = editing?.kind === 'road' ? editing.entry : undefined;
+  const existingExit = editing?.kind === 'road' ? editing.exit : undefined;
+  const existingPath = editing?.kind === 'road' ? editing.path : undefined;
 
-  const draft = useMemo((): NewPlaceInput => {
+  /** Fill the name from a picked candidate only when the user hasn't typed one. */
+  const applyResolvedName = (candidateName?: string): void => {
+    if (candidateName && !name.trim()) setName(candidateName);
+  };
+
+  const draft = useMemo((): NewPlaceInput | NewRouteInput => {
     const base = {
       name,
       status,
@@ -63,6 +82,28 @@ export function PlaceForm({ editing, onDone }: PlaceFormProps) {
         };
   }, [kind, name, status, rating, tags, notes, coord, entry, exit, existingWaypoints]);
 
+  /** Resolve a road's driving-path geometry (entry → waypoints → exit). */
+  const resolvePath = async (
+    routeEntry: BD09,
+    routeExit: BD09,
+    waypoints: BD09[] | undefined,
+  ): Promise<BD09[]> => {
+    const provider = getMapProvider();
+    const pins = [routeEntry, ...(waypoints ?? []), routeExit];
+    const full: BD09[] = [];
+    for (let i = 0; i < pins.length - 1; i += 1) {
+      try {
+        const res = await provider.drivingRoute(pins[i]!, pins[i + 1]!);
+        const seg = res.path.length >= 2 ? res.path : [pins[i]!, pins[i + 1]!];
+        full.push(...(i === 0 ? seg : seg.slice(1)));
+      } catch {
+        // Routing unavailable for this segment — fall back to a straight line.
+        full.push(...(i === 0 ? [pins[i]!, pins[i + 1]!] : [pins[i + 1]!]));
+      }
+    }
+    return full.length >= 2 ? full : [routeEntry, routeExit];
+  };
+
   const handleSubmit = (e: React.FormEvent): void => {
     e.preventDefault();
     const result = validatePlace(draft);
@@ -70,12 +111,35 @@ export function PlaceForm({ editing, onDone }: PlaceFormProps) {
       setErrors(result.errors);
       return;
     }
-    if (editing) {
-      updatePlace(editing.id, draft);
-    } else {
-      addPlace(draft);
-    }
-    onDone();
+
+    void (async () => {
+      setSaving(true);
+      try {
+        if (draft.kind === 'destination') {
+          if (editing) await updatePlace(editing.id, draft);
+          else await addPlace(draft);
+        } else {
+          // Recompute geometry only when endpoints changed (or none stored yet).
+          const endpointsUnchanged =
+            existingEntry &&
+            existingExit &&
+            sameCoord(draft.entry, existingEntry) &&
+            sameCoord(draft.exit, existingExit);
+          const path =
+            endpointsUnchanged && existingPath && existingPath.length >= 2
+              ? existingPath
+              : await resolvePath(draft.entry, draft.exit, draft.waypoints);
+          const routeDraft: NewRouteInput = { ...draft, path };
+          if (editing) await updateRoute(editing.id, routeDraft);
+          else await addRoute(routeDraft);
+        }
+        onDone();
+      } catch (err) {
+        setErrors([err instanceof Error ? err.message : '保存失败。']);
+      } finally {
+        setSaving(false);
+      }
+    })();
   };
 
   return (
@@ -107,15 +171,33 @@ export function PlaceForm({ editing, onDone }: PlaceFormProps) {
 
       <div>
         <label className="field-label">名称</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：宏村" />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="搜索位置后自动填入，可修改"
+        />
       </div>
 
       {kind === 'destination' ? (
-        <LocationField label="位置" coord={coord} onResolved={setCoord} />
+        <LocationField
+          label="位置"
+          coord={coord}
+          onResolved={(c, resolvedName) => {
+            setCoord(c);
+            applyResolvedName(resolvedName);
+          }}
+        />
       ) : (
         <>
-          <LocationField label="起点" coord={entry} onResolved={setEntry} />
-          <LocationField label="终点" coord={exit} onResolved={setExit} />
+          <LocationField
+            label="起点"
+            coord={entry}
+            onResolved={(c, resolvedName) => {
+              setEntry(c);
+              applyResolvedName(resolvedName);
+            }}
+          />
+          <LocationField label="终点" coord={exit} onResolved={(c) => setExit(c)} />
         </>
       )}
 
@@ -159,13 +241,17 @@ export function PlaceForm({ editing, onDone }: PlaceFormProps) {
       )}
 
       <div className="row">
-        <button type="submit" className="primary">
-          {editing ? '保存修改' : '添加地点'}
+        <button type="submit" className="primary" disabled={saving}>
+          {saving ? '保存中…' : editing ? '保存修改' : '添加地点'}
         </button>
-        <button type="button" onClick={onDone}>
+        <button type="button" onClick={onDone} disabled={saving}>
           取消
         </button>
       </div>
     </form>
   );
+}
+
+function sameCoord(a: BD09, b: BD09): boolean {
+  return Math.abs(a.lng - b.lng) < 1e-9 && Math.abs(a.lat - b.lat) < 1e-9;
 }

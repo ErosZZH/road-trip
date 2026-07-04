@@ -1,22 +1,23 @@
 import { useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
 import { DataStore, downloadCatalog } from '../store/DataStore';
-import { emptyCatalog } from '../store/catalogSchema';
 
 const store = new DataStore();
 
 /** Export / import controls for the catalog JSON (spec: data-store). */
 export function DataControls() {
-  const places = useAppStore((s) => s.places);
-  const trips = useAppStore((s) => s.trips);
   const replaceAll = useAppStore((s) => s.replaceAll);
   const mergeIn = useAppStore((s) => s.mergeIn);
   const fileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const handleExport = (): void => {
-    const json = store.export({ ...emptyCatalog(), places, trips });
-    downloadCatalog(json);
+  const handleExport = async (): Promise<void> => {
+    try {
+      const json = await store.export();
+      downloadCatalog(json);
+    } catch (err) {
+      setMessage(`导出失败：${err instanceof Error ? err.message : '未知错误'}`);
+    }
   };
 
   const handleFile = async (file: File, mode: 'replace' | 'merge'): Promise<void> => {
@@ -26,19 +27,23 @@ export function DataControls() {
       setMessage(`导入失败：${result.error}`);
       return;
     }
-    if (mode === 'replace') {
-      await replaceAll(result.data);
-    } else {
-      await mergeIn(result.data);
+    try {
+      if (mode === 'replace') {
+        await replaceAll(result.data);
+      } else {
+        await mergeIn(result.data);
+      }
+      setMessage(`已导入 ${result.data.places.length} 个地点、${result.data.routes.length} 条道路。`);
+    } catch (err) {
+      setMessage(`导入失败：${err instanceof Error ? err.message : '未知错误'}`);
     }
-    setMessage(`已导入 ${result.data.places.length} 个地点。`);
   };
 
   return (
     <div className="card stack">
       <p className="section-title">数据</p>
       <div className="row">
-        <button type="button" onClick={handleExport}>
+        <button type="button" onClick={() => void handleExport()}>
           导出 JSON
         </button>
         <button type="button" onClick={() => fileRef.current?.click()}>

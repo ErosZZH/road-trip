@@ -1,10 +1,10 @@
-import type { BD09, Place, RoadPlace, RouteStop } from '../types';
+import type { BD09, CatalogEntity, Place, Route, RouteStop } from '../types';
 import { haversineMeters } from '../map/coords';
 
 /**
  * A node in the optimizer's graph. Destinations have a single point used for
- * both arrival and departure. Roads have distinct entry/exit points and a
- * chosen traversal direction, so entering at one endpoint means leaving at the
+ * both arrival and departure. Routes (roads) have distinct entry/exit points and
+ * a chosen traversal direction, so entering at one endpoint means leaving at the
  * other (design.md decision #4).
  */
 export interface PlanNode {
@@ -16,7 +16,7 @@ export interface PlanNode {
   depart: BD09;
 }
 
-function roadOrientations(road: RoadPlace): [PlanNode, PlanNode] {
+function roadOrientations(road: Route): [PlanNode, PlanNode] {
   return [
     { placeId: road.id, kind: 'road', arrive: road.entry, depart: road.exit }, // entry→exit
     { placeId: road.id, kind: 'road', arrive: road.exit, depart: road.entry }, // exit→entry
@@ -24,7 +24,6 @@ function roadOrientations(road: RoadPlace): [PlanNode, PlanNode] {
 }
 
 function destinationNode(place: Place): PlanNode {
-  if (place.kind !== 'destination') throw new Error('not a destination');
   return { placeId: place.id, kind: 'destination', arrive: place.coord, depart: place.coord };
 }
 
@@ -127,33 +126,33 @@ export interface OptimizeResult {
 }
 
 /**
- * Optimize a home-anchored cyclic route over the given places.
- * - 0 places → empty order.
- * - 1 place → trivial there-and-back.
- * - ≥2 places → nearest-neighbor + 2-opt, with per-road orientation.
+ * Optimize a home-anchored cyclic route over the given entities.
+ * - 0 entities → empty order.
+ * - 1 entity → trivial there-and-back.
+ * - ≥2 entities → nearest-neighbor + 2-opt, with per-route orientation.
  */
-export function optimizeRoute(home: BD09, places: Place[]): OptimizeResult {
-  if (places.length === 0) return { order: [], estimatedMeters: 0 };
+export function optimizeRoute(home: BD09, entities: CatalogEntity[]): OptimizeResult {
+  if (entities.length === 0) return { order: [], estimatedMeters: 0 };
 
-  // Build initial nodes: destinations fixed; roads default to entry→exit.
-  const nodes: PlanNode[] = places.map((p) =>
+  // Build initial nodes: destinations fixed; routes default to entry→exit.
+  const nodes: PlanNode[] = entities.map((p) =>
     p.kind === 'destination' ? destinationNode(p) : roadOrientations(p)[0],
   );
 
-  if (places.length === 1) {
+  if (entities.length === 1) {
     const oriented = orientRoads(home, nodes);
-    return { order: toStops(oriented, places), estimatedMeters: tourCost(home, oriented) };
+    return { order: toStops(oriented, entities), estimatedMeters: tourCost(home, oriented) };
   }
 
   const nn = nearestNeighbor(home, nodes);
   const optimized = twoOpt(home, nn);
-  return { order: toStops(optimized, places), estimatedMeters: tourCost(home, optimized) };
+  return { order: toStops(optimized, entities), estimatedMeters: tourCost(home, optimized) };
 }
 
-function toStops(nodes: PlanNode[], places: Place[]): RouteStop[] {
+function toStops(nodes: PlanNode[], entities: CatalogEntity[]): RouteStop[] {
   return nodes.map((n) => {
     if (n.kind !== 'road') return { placeId: n.placeId };
-    const road = places.find((p) => p.id === n.placeId) as RoadPlace | undefined;
+    const road = entities.find((p) => p.id === n.placeId) as Route | undefined;
     const enterAtEntry = road ? sameCoord(n.arrive, road.entry) : true;
     return { placeId: n.placeId, enterAtEntry };
   });
@@ -163,10 +162,10 @@ function sameCoord(a: BD09, b: BD09): boolean {
   return Math.abs(a.lng - b.lng) < 1e-9 && Math.abs(a.lat - b.lat) < 1e-9;
 }
 
-/** Resolve the arrival/departure points for a stop given its place + orientation. */
-export function stopEndpoints(stop: RouteStop, place: Place): { arrive: BD09; depart: BD09 } {
-  if (place.kind === 'destination') return { arrive: place.coord, depart: place.coord };
+/** Resolve the arrival/departure points for a stop given its entity + orientation. */
+export function stopEndpoints(stop: RouteStop, entity: CatalogEntity): { arrive: BD09; depart: BD09 } {
+  if (entity.kind === 'destination') return { arrive: entity.coord, depart: entity.coord };
   return stop.enterAtEntry === false
-    ? { arrive: place.exit, depart: place.entry }
-    : { arrive: place.entry, depart: place.exit };
+    ? { arrive: entity.exit, depart: entity.entry }
+    : { arrive: entity.entry, depart: entity.exit };
 }

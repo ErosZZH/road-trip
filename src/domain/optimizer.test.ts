@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { optimizeRoute, tourCost, stopEndpoints } from './optimizer';
-import type { BD09, DestinationPlace, Place, RoadPlace } from '../types';
+import type { BD09, CatalogEntity, Place, Route } from '../types';
 
 const HOME: BD09 = { lng: 120.7345, lat: 31.3178 };
 
-function dest(id: string, lng: number, lat: number, tags: string[] = []): DestinationPlace {
+function dest(id: string, lng: number, lat: number, tags: string[] = []): Place {
   return { id, kind: 'destination', name: id, tags, status: 'wishlist', coord: { lng, lat } };
 }
 
-function road(id: string, entry: BD09, exit: BD09): RoadPlace {
+function road(id: string, entry: BD09, exit: BD09): Route {
   return { id, kind: 'road', name: id, tags: ['scenic-drive'], status: 'wishlist', entry, exit };
 }
 
@@ -108,7 +108,7 @@ describe('optimizeRoute — road direction', () => {
 
 describe('optimizeRoute — mixed destinations and roads', () => {
   it('handles a selection of destinations and a road together', () => {
-    const places: Place[] = [
+    const places: CatalogEntity[] = [
       dest('a', 121.0, 31.5),
       road('r', { lng: 120.3, lat: 31.2 }, { lng: 120.4, lat: 31.25 }),
       dest('b', 121.3, 31.9),

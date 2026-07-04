@@ -1,10 +1,4 @@
-# place-catalog Specification
-
-## Purpose
-
-The data model and CRUD for places — destinations (points) and scenic roads (segments) — including geocoding, tags, visited/wishlist status, and 1–5 ratings.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Add a destination place by searching a name
 
@@ -67,39 +61,6 @@ geometry between the endpoints so the route persists with its real path.
 - **THEN** the system rejects the submission and prompts the user to provide the missing
   endpoint
 
-### Requirement: Categorize places with tags
-
-The system SHALL allow each place to carry zero or more type/tags (e.g. `drifting`, `scenic-drive`, `mountain`, `water-town`) so that places can be filtered and used in trip constraints.
-
-#### Scenario: Assign tags when adding a place
-
-- **WHEN** the user selects or types one or more tags while adding or editing a place
-- **THEN** the system stores those tags on the place record and makes them available for filtering and trip constraints
-
-#### Scenario: Reuse existing tags
-
-- **WHEN** the user begins typing a tag that already exists in the catalog
-- **THEN** the system suggests matching existing tags to keep tag names consistent
-
-### Requirement: Track visited status and rating
-
-The system SHALL let the user mark a place as visited or wishlist, and SHALL allow a visited place to carry an integer rating (vote) from 1 to 5.
-
-#### Scenario: Rate a visited place
-
-- **WHEN** the user marks a place as "visited" and selects a rating of 1, 2, 3, 4, or 5
-- **THEN** the system stores the visited status and the rating on the place record
-
-#### Scenario: Rating requires visited status
-
-- **WHEN** the user attempts to set a rating on a place whose status is "wishlist"
-- **THEN** the system does not store a rating until the place is marked visited
-
-#### Scenario: Reject out-of-range rating
-
-- **WHEN** a rating value outside the range 1–5 is supplied
-- **THEN** the system rejects the value and keeps any previously stored valid rating
-
 ### Requirement: Edit and remove places and routes
 
 The system SHALL allow the user to edit the fields of an existing place or route and to
@@ -125,6 +86,8 @@ delete either from the catalog.
 - **THEN** the system warns that it is used by those trips and, on confirmation, removes it
   and marks the affected trips as needing review
 
+## ADDED Requirements
+
 ### Requirement: Places and routes are distinct entities
 
 The system SHALL model destinations and scenic roads as two distinct entity types — a
@@ -141,3 +104,14 @@ entry point to an exit point — each stored in its own collection.
 - **WHEN** a scenic road is created
 - **THEN** it is stored as a route with ordered entry and exit points plus its driving-path
   geometry, distinct from the places collection
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Add a destination place`
+- TO: `### Requirement: Add a destination place by searching a name`
+
+- FROM: `### Requirement: Add a scenic driving road`
+- TO: `### Requirement: Add a scenic route by searching its endpoints`
+
+- FROM: `### Requirement: Edit and remove places`
+- TO: `### Requirement: Edit and remove places and routes`

@@ -1,24 +1,4 @@
-# map-visualization Specification
-
-## Purpose
-
-The Baidu-map-based primary view — home centering, place markers, road polylines, tag/status filtering, and rendering of an optimized trip route.
-
-## Requirements
-
-### Requirement: Map-centric primary view centered on home
-
-The system SHALL present a Baidu map as the primary view, initially centered on the user's home location "苏州市工业园区荣域花园" with a persistent home marker.
-
-#### Scenario: Initial load centers on home
-
-- **WHEN** the app loads for the first time
-- **THEN** the map is displayed as the main view, centered on the home coordinate with a distinct home marker
-
-#### Scenario: Baidu API key missing
-
-- **WHEN** no Baidu Maps API key (AK) is configured
-- **THEN** the system shows a clear message explaining that a Baidu AK is required and how to provide it, instead of a broken map
+## MODIFIED Requirements
 
 ### Requirement: Render places and routes on the map
 
@@ -61,16 +41,7 @@ and by visited/wishlist status.
 - **WHEN** the user filters by "visited" or "wishlist"
 - **THEN** the map shows only places and routes matching the selected status
 
-### Requirement: Render an optimized trip route
+## RENAMED Requirements
 
-The system SHALL draw the computed trip route on the map as an ordered path starting and ending at home, passing through the selected places in optimized order.
-
-#### Scenario: Display a planned loop
-
-- **WHEN** the trip planner produces an optimized cyclic route
-- **THEN** the map draws the route as a connected path from home through each selected place and back to home, in the optimized order
-
-#### Scenario: Highlight route legs
-
-- **WHEN** a trip route is displayed
-- **THEN** the user can see the ordered sequence of stops and identify each leg between consecutive stops
+- FROM: `### Requirement: Render places on the map`
+- TO: `### Requirement: Render places and routes on the map`

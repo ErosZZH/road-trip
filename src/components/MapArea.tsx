@@ -1,12 +1,12 @@
 import { hasBaiduAk } from '../config/home';
-import { useAppStore, selectFilteredPlaces } from '../store/appStore';
+import { useAppStore, selectFilteredPlaces, selectFilteredRoutes } from '../store/appStore';
 import { useMap } from '../hooks/useMap';
 import { PlaceDetail } from './PlaceDetail';
 
 /**
  * Map region. Renders the live Baidu map with markers/polylines for filtered
- * places and the active trip route. Falls back to a clear notice when no AK is
- * configured (spec: map-visualization — "Baidu API key missing").
+ * places and routes and the active trip route. Falls back to a clear notice when
+ * no AK is configured (spec: map-visualization — "Baidu API key missing").
  */
 export function MapArea() {
   if (!hasBaiduAk()) {
@@ -17,10 +17,11 @@ export function MapArea() {
 
 function LiveMap() {
   const places = useAppStore(selectFilteredPlaces);
+  const routes = useAppStore(selectFilteredRoutes);
   const selectPlace = useAppStore((s) => s.selectPlace);
   const selectedId = useAppStore((s) => s.selectedPlaceId);
   const route = useAppStore((s) => s.activeRoute);
-  const { containerRef, error } = useMap(places, selectPlace, route ?? null, selectedId);
+  const { containerRef, error } = useMap(places, routes, selectPlace, route ?? null, selectedId);
 
   return (
     <div className="map-area">

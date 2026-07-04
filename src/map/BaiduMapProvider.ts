@@ -13,6 +13,12 @@ import {
 const SDK_READY_CALLBACK = '__onBMapGLReady';
 const HOME_ZOOM = 9;
 
+/**
+ * Anchor point for POI searches, biasing results toward the app's operating
+ * area (south Anhui / north Zhejiang, around Suzhou home). BD09 coordinates.
+ */
+const HOME_BIAS: BD09 = { lng: 120.7345, lat: 31.3178 };
+
 function toPoint(coord: BD09): BMapGL.Point {
   return new window.BMapGL!.Point(coord.lng, coord.lat);
 }
@@ -133,27 +139,34 @@ export class BaiduMapProvider implements MapProvider {
     const trimmed = query.trim();
     if (!trimmed) return [];
 
-    // BMapGL's Geocoder resolves a single best point. We wrap it in a Promise
-    // and return it as a one-element candidate list; the reverse-geocode gives
-    // a friendly label for disambiguation.
+    // Use LocalSearch (POI search) so a keyword returns *all* candidate places,
+    // not just a single best point (spec: "search returns multiple candidates").
+    // The search is biased toward the app's operating area by anchoring it at
+    // HOME; each POI supplies a title (used to auto-fill the name) and address.
     return new Promise<GeocodeCandidate[]>((resolve, reject) => {
-      const geocoder = new window.BMapGL!.Geocoder();
-      geocoder.getPoint(trimmed, (point) => {
-        if (!point) {
-          resolve([]);
-          return;
-        }
-        geocoder.getLocation(point, (result) => {
-          resolve([
-            {
-              label: result?.address ?? trimmed,
-              coord: fromPoint(point),
-            },
-          ]);
-        });
+      const timeout = window.setTimeout(
+        () => reject(new MapProviderError('地址解析超时。')),
+        15000,
+      );
+      const search = new window.BMapGL!.LocalSearch(toPoint(HOME_BIAS), {
+        pageCapacity: 20,
+        onSearchComplete: (results) => {
+          window.clearTimeout(timeout);
+          const candidates: GeocodeCandidate[] = [];
+          const n = results && results.getCurrentNumPois ? results.getCurrentNumPois() : 0;
+          for (let i = 0; i < n; i += 1) {
+            const poi = results.getPoi(i);
+            if (!poi || !poi.point) continue;
+            candidates.push({
+              label: poi.title,
+              coord: fromPoint(poi.point),
+              context: poi.address || poi.city,
+            });
+          }
+          resolve(candidates);
+        },
       });
-      // Guard against a callback that never fires.
-      window.setTimeout(() => reject(new MapProviderError('地址解析超时。')), 15000);
+      search.search(trimmed);
     });
   }
 

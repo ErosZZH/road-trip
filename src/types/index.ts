@@ -12,14 +12,14 @@ export interface BD09 {
   lat: number;
 }
 
-/** Whether the user has been to a place. */
+/** Whether the user has been to a place or route. */
 export type PlaceStatus = 'visited' | 'wishlist';
 
-/** A 1–5 rating (vote) for a visited place. */
+/** A 1–5 rating (vote) for a visited place or route. */
 export type Rating = 1 | 2 | 3 | 4 | 5;
 
-/** Fields common to every place regardless of kind. */
-interface PlaceBase {
+/** Fields common to every catalog entity (place or route). */
+interface EntityBase {
   id: string;
   name: string;
   tags: string[];
@@ -29,36 +29,42 @@ interface PlaceBase {
   notes?: string;
 }
 
-/** A scenic destination — a single point on the map. */
-export interface DestinationPlace extends PlaceBase {
+/**
+ * A scenic destination — a single point on the map. Stored under
+ * `data/places/` (design.md decision #2).
+ */
+export interface Place extends EntityBase {
   kind: 'destination';
   coord: BD09;
 }
 
 /**
- * A scenic driving road — a segment traversed from `entry` to `exit`.
+ * A scenic driving road — a segment traversed from `entry` to `exit`, stored
+ * under `data/routes/` together with its geometry (design.md decisions #2/#5).
  * The optimizer may traverse it in either direction (design.md decision #4).
  *
- * `waypoints` are optional intermediate points that pin the road to its real
- * path. Without them, a road is just a fastest-route between entry and exit
- * (which can diverge onto highways); with them, the rendered line threads
- * through the actual scenic road. They are ordered entry → exit.
+ * `waypoints` are optional intermediate points that pin the route to its real
+ * path. `path` is the persisted driving-path geometry (ordered BD09 points,
+ * entry → exit) so the route renders and plans from stored geometry without
+ * recomputing it in the browser. Both are ordered entry → exit.
  */
-export interface RoadPlace extends PlaceBase {
+export interface Route extends EntityBase {
   kind: 'road';
   entry: BD09;
   exit: BD09;
   waypoints?: BD09[];
+  /** Persisted driving-path geometry (entry → exit). May be empty if unresolved. */
+  path?: BD09[];
 }
 
-/** A place is either a point destination or a road segment. */
-export type Place = DestinationPlace | RoadPlace;
+/** Any catalog entity: a point destination or a scenic route segment. */
+export type CatalogEntity = Place | Route;
 
-export type PlaceKind = Place['kind'];
+export type PlaceKind = CatalogEntity['kind'];
 
 /**
  * A constraint a valid trip must satisfy. v1 supports "the selection must
- * include at least `min` places carrying `tag`".
+ * include at least `min` entities carrying `tag`".
  */
 export interface TagConstraint {
   type: 'includesTag';
@@ -86,25 +92,31 @@ export interface RouteMetrics {
 }
 
 /**
- * An ordered stop in a computed route. For road places, `enterAtEntry`
+ * An ordered stop in a computed route. For route (road) entities, `enterAtEntry`
  * records the chosen traversal direction.
  */
 export interface RouteStop {
   placeId: string;
-  /** For road places: true = entry→exit, false = exit→entry. Undefined for destinations. */
+  /** For route entities: true = entry→exit, false = exit→entry. Undefined for destinations. */
   enterAtEntry?: boolean;
 }
 
-/** A saved trip: a candidate selection plus constraints and (optionally) a computed plan. */
+/**
+ * A saved trip: a candidate selection of places and routes plus constraints and
+ * (optionally) a computed plan. Stored under `data/trips/`.
+ */
 export interface Trip {
   id: string;
   name: string;
+  /** Ids of selected destination places. */
   placeIds: string[];
+  /** Ids of selected scenic routes. */
+  routeIds: string[];
   constraints: TagConstraint[];
   /** Optimized visiting order (excludes home, which anchors both ends). */
   order?: RouteStop[];
   metrics?: RouteMetrics;
-  /** Set when a referenced place was deleted and the plan should be recomputed. */
+  /** Set when a referenced place/route was deleted and the plan should be recomputed. */
   needsReview?: boolean;
 }
 
@@ -118,5 +130,6 @@ export interface CatalogData {
   /** Coordinate system all coords in this document use. */
   coordSystem: CoordSystem;
   places: Place[];
+  routes: Route[];
   trips: Trip[];
 }

@@ -1,4 +1,4 @@
-import type { Place, RouteLeg, RouteMetrics, RouteStop } from '../types';
+import type { CatalogEntity, RouteLeg, RouteMetrics, RouteStop } from '../types';
 import { HOME } from '../config/home';
 import { getMapProvider } from '../map';
 import { optimizeRoute, stopEndpoints } from '../domain/optimizer';
@@ -13,13 +13,17 @@ type GetState = () => AppState;
  * Plan the current trip: enforce tag constraints, optimize the cyclic order,
  * then fetch real driving distances/durations per leg. Falls back to
  * straight-line estimates if the routing service is unavailable so the user
- * still sees a plan.
+ * still sees a plan. Selection spans both destination places and scenic routes.
  */
 export async function runPlanTrip(set: SetState, get: GetState): Promise<void> {
   const state = get();
-  const selected = state.tripSelection
-    .map((id) => state.places.find((p) => p.id === id))
-    .filter((p): p is Place => Boolean(p));
+  const byId = new Map<string, CatalogEntity>([
+    ...state.places.map((p) => [p.id, p] as const),
+    ...state.routes.map((r) => [r.id, r] as const),
+  ]);
+  const selected: CatalogEntity[] = [...state.tripSelection, ...state.tripRouteSelection]
+    .map((id) => byId.get(id))
+    .filter((e): e is CatalogEntity => Boolean(e));
 
   // Constraint gate (spec: trip-planner "Constraint not satisfiable").
   const unmet = unsatisfiedConstraints(selected, state.constraints);
@@ -36,7 +40,7 @@ export async function runPlanTrip(set: SetState, get: GetState): Promise<void> {
 
   const { order } = optimizeRoute(HOME.coord, selected);
 
-  // Trivial: no places selected.
+  // Trivial: nothing selected.
   if (order.length === 0) {
     set({ planning: false, activeOrder: [], activeRoute: emptyMetrics() });
     return;
@@ -62,22 +66,22 @@ function emptyMetrics(): RouteMetrics {
 }
 
 /** Build a home → stops → home node list with resolved endpoints. */
-function routePoints(order: RouteStop[], places: Place[]) {
-  const byId = new Map(places.map((p) => [p.id, p] as const));
+function routePoints(order: RouteStop[], entities: CatalogEntity[]) {
+  const byId = new Map(entities.map((p) => [p.id, p] as const));
   const points = [{ id: '@home', arrive: HOME.coord, depart: HOME.coord }];
   for (const stop of order) {
-    const place = byId.get(stop.placeId);
-    if (!place) continue;
-    const { arrive, depart } = stopEndpoints(stop, place);
+    const entity = byId.get(stop.placeId);
+    if (!entity) continue;
+    const { arrive, depart } = stopEndpoints(stop, entity);
     points.push({ id: stop.placeId, arrive, depart });
   }
   points.push({ id: '@home', arrive: HOME.coord, depart: HOME.coord });
   return points;
 }
 
-async function buildMetrics(order: RouteStop[], places: Place[]): Promise<RouteMetrics> {
+async function buildMetrics(order: RouteStop[], entities: CatalogEntity[]): Promise<RouteMetrics> {
   const provider = getMapProvider();
-  const points = routePoints(order, places);
+  const points = routePoints(order, entities);
   const legs: RouteLeg[] = [];
   let totalDistance = 0;
   let totalDuration = 0;
@@ -101,8 +105,8 @@ async function buildMetrics(order: RouteStop[], places: Place[]): Promise<RouteM
 }
 
 /** Straight-line metrics used when the routing service can't be reached. */
-function fallbackMetrics(order: RouteStop[], places: Place[]): RouteMetrics {
-  const points = routePoints(order, places);
+function fallbackMetrics(order: RouteStop[], entities: CatalogEntity[]): RouteMetrics {
+  const points = routePoints(order, entities);
   const legs: RouteLeg[] = [];
   let totalDistance = 0;
   const ASSUMED_SPEED_MPS = 60_000 / 3600; // ~60 km/h

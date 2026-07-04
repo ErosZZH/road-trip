@@ -6,33 +6,24 @@ import type { GeocodeCandidate } from '../map/MapProvider';
 interface LocationFieldProps {
   label: string;
   coord: BD09 | undefined;
-  onResolved: (coord: BD09 | undefined) => void;
+  /** Called when the user picks a candidate: passes its coord and its name. */
+  onResolved: (coord: BD09 | undefined, name?: string) => void;
 }
 
 /**
- * A single geocoded location input. Handles: resolve → pick among candidates,
- * geocode failure (retry / manual coord), and a resolved-state summary.
- * (spec: place-catalog "Geocoding returns multiple candidates" / "Geocoding fails")
+ * A single geocoded location input. The user searches a name, the field lists
+ * ALL returned candidates, and picking one resolves both the coordinate and the
+ * candidate's name to the parent (spec: place-catalog "search returns multiple
+ * candidates" + auto-filled name). There is no manual coordinate entry — the
+ * geometry always comes from a selected Baidu result.
  */
 export function LocationField({ label, coord, onResolved }: LocationFieldProps) {
   const [query, setQuery] = useState('');
-  const [manual, setManual] = useState(false);
-  const [manualLng, setManualLng] = useState('');
-  const [manualLat, setManualLat] = useState('');
   const { state, run, reset } = useGeocoder();
 
   const pick = (c: GeocodeCandidate): void => {
-    onResolved(c.coord);
+    onResolved(c.coord, c.label);
     reset();
-  };
-
-  const applyManual = (): void => {
-    const lng = Number(manualLng);
-    const lat = Number(manualLat);
-    if (Number.isFinite(lng) && Number.isFinite(lat)) {
-      onResolved({ lng, lat });
-      setManual(false);
-    }
   };
 
   return (
@@ -69,7 +60,7 @@ export function LocationField({ label, coord, onResolved }: LocationFieldProps) 
           </div>
 
           {state.status === 'done' && state.candidates.length === 0 && (
-            <p className="muted">未找到匹配结果。请尝试更完整的地址，或手动输入坐标。</p>
+            <p className="muted">未找到匹配结果。请尝试更完整的名称或地址后重试。</p>
           )}
 
           {state.status === 'done' && state.candidates.length > 0 && (
@@ -87,37 +78,6 @@ export function LocationField({ label, coord, onResolved }: LocationFieldProps) 
             <p className="muted" style={{ color: 'var(--danger)' }}>
               {state.message}
             </p>
-          )}
-
-          <button
-            type="button"
-            className="muted"
-            style={{ border: 'none', background: 'none', textAlign: 'left', padding: 0 }}
-            onClick={() => setManual((m) => !m)}
-          >
-            {manual ? '隐藏手动输入' : '手动输入坐标'}
-          </button>
-
-          {manual && (
-            <div className="row">
-              <input
-                type="number"
-                step="0.00001"
-                placeholder="经度"
-                value={manualLng}
-                onChange={(e) => setManualLng(e.target.value)}
-              />
-              <input
-                type="number"
-                step="0.00001"
-                placeholder="纬度"
-                value={manualLat}
-                onChange={(e) => setManualLat(e.target.value)}
-              />
-              <button type="button" onClick={applyManual}>
-                确定
-              </button>
-            </div>
           )}
         </>
       )}

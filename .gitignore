@@ -6,6 +6,13 @@ dist/
 dist-ssr/
 coverage/
 
+# On-disk catalog data (the backend's source of truth). Keep the folder
+# skeleton (.gitkeep) but ignore the per-entity JSON files; commit exports
+# instead when you want to version a snapshot.
+data/places/*.json
+data/routes/*.json
+data/trips/*.json
+
 # TypeScript / Vite build artifacts
 *.tsbuildinfo
 vite.config.js

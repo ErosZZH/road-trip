@@ -1,29 +1,39 @@
 import { create } from 'zustand';
-import type { CatalogData, Place, RouteMetrics, RouteStop, TagConstraint, Trip } from '../types';
+import type {
+  CatalogData,
+  CatalogEntity,
+  Place,
+  Route,
+  RouteMetrics,
+  RouteStop,
+  TagConstraint,
+  Trip,
+} from '../types';
 import { DataStore } from './DataStore';
-import { seedFromBundled } from './seed';
-import { emptyCatalog } from './catalogSchema';
 import { newId } from '../util/id';
 import { runPlanTrip } from './planTrip';
 
 const store = new DataStore();
 
-/** Distributive Omit so the union's variant-specific keys (coord/entry/exit) survive. */
-type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
-
 /** A place with all fields except the generated id. */
-export type NewPlaceInput = DistributiveOmit<Place, 'id'>;
+export type NewPlaceInput = Omit<Place, 'id'>;
+/** A route with all fields except the generated id. */
+export type NewRouteInput = Omit<Route, 'id'>;
 
 export interface AppState {
   // Data
   places: Place[];
+  routes: Route[];
   trips: Trip[];
   loaded: boolean;
+  loadError: string | null;
 
   // UI state
   selectedPlaceId: string | null;
-  /** Candidate place ids for the trip currently being planned. */
+  /** Candidate destination-place ids for the trip currently being planned. */
   tripSelection: string[];
+  /** Candidate route ids for the trip currently being planned. */
+  tripRouteSelection: string[];
   activeTripId: string | null;
 
   // Filters (map-visualization)
@@ -35,24 +45,29 @@ export interface AppState {
   // Lifecycle
   init: () => Promise<void>;
 
-  // Place CRUD (each persists)
-  addPlace: (input: NewPlaceInput) => Place;
-  updatePlace: (id: string, patch: Partial<NewPlaceInput>) => void;
-  removePlace: (id: string) => { affectedTripIds: string[] };
+  // Place CRUD (each persists to the backend)
+  addPlace: (input: NewPlaceInput) => Promise<Place>;
+  updatePlace: (id: string, patch: Partial<NewPlaceInput>) => Promise<void>;
+  removePlace: (id: string) => Promise<{ affectedTripIds: string[] }>;
+
+  // Route CRUD (each persists to the backend)
+  addRoute: (input: NewRouteInput) => Promise<Route>;
+  updateRoute: (id: string, patch: Partial<NewRouteInput>) => Promise<void>;
+  removeRoute: (id: string) => Promise<{ affectedTripIds: string[] }>;
 
   // Selection
   selectPlace: (id: string | null) => void;
 
-  // Import/export replace hook (used by Group 4 UI)
+  // Import/export replace hook
   replaceAll: (data: CatalogData) => Promise<void>;
   mergeIn: (data: CatalogData) => Promise<void>;
 
-  // Trip selection (used by Group 7)
-  addToTrip: (placeId: string) => void;
-  removeFromTrip: (placeId: string) => void;
+  // Trip selection
+  addToTrip: (id: string) => void;
+  removeFromTrip: (id: string) => void;
   clearTripSelection: () => void;
 
-  // Trip planning (Group 7)
+  // Trip planning
   constraints: TagConstraint[];
   activeOrder: RouteStop[] | null;
   activeRoute: RouteMetrics | null;
@@ -61,27 +76,21 @@ export interface AppState {
   addConstraint: (tag: string, min?: number) => void;
   removeConstraint: (tag: string) => void;
   planTrip: () => Promise<void>;
-  saveTrip: (name: string) => void;
+  saveTrip: (name: string) => Promise<void>;
   openTrip: (tripId: string) => void;
-  deleteTrip: (tripId: string) => void;
-}
-
-function snapshot(state: Pick<AppState, 'places' | 'trips'>): CatalogData {
-  return { ...emptyCatalog(), places: state.places, trips: state.trips };
+  deleteTrip: (tripId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => {
-  /** Persist current places+trips (fire and forget; storage errors are swallowed by DataStore). */
-  const persist = (): void => {
-    void store.save(snapshot(get()));
-  };
-
   return {
     places: [],
+    routes: [],
     trips: [],
     loaded: false,
+    loadError: null,
     selectedPlaceId: null,
     tripSelection: [],
+    tripRouteSelection: [],
     activeTripId: null,
     filterTags: [],
     filterStatus: 'all',
@@ -95,39 +104,96 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     async init() {
-      const data = await store.loadInitial(seedFromBundled());
-      set({ places: data.places, trips: data.trips, loaded: true });
+      try {
+        const data = await store.load();
+        set({
+          places: data.places,
+          routes: data.routes,
+          trips: data.trips,
+          loaded: true,
+          loadError: null,
+        });
+      } catch (err) {
+        // Still mark loaded so the UI renders; surface the error.
+        set({
+          loaded: true,
+          loadError: err instanceof Error ? err.message : '无法从数据服务加载。',
+        });
+      }
     },
 
-    addPlace(input) {
+    async addPlace(input) {
       const place = { ...input, id: newId('place') } as Place;
-      set((s) => ({ places: [...s.places, place] }));
-      persist();
-      return place;
+      const saved = await store.savePlace(place);
+      set((s) => ({ places: [...s.places, saved] }));
+      return saved;
     },
 
-    updatePlace(id, patch) {
-      set((s) => ({
-        places: s.places.map((p) => (p.id === id ? ({ ...p, ...patch } as Place) : p)),
-      }));
-      persist();
+    async updatePlace(id, patch) {
+      const current = get().places.find((p) => p.id === id);
+      if (!current) return;
+      const next = { ...current, ...patch } as Place;
+      const saved = await store.savePlace(next);
+      set((s) => ({ places: s.places.map((p) => (p.id === id ? saved : p)) }));
     },
 
-    removePlace(id) {
+    async removePlace(id) {
+      await store.deletePlace(id);
       const affectedTripIds = get()
         .trips.filter((t) => t.placeIds.includes(id))
         .map((t) => t.id);
+      // Mark affected trips for review and persist each change.
+      const updatedTrips = get().trips.map((t) =>
+        t.placeIds.includes(id)
+          ? { ...t, placeIds: t.placeIds.filter((pid) => pid !== id), needsReview: true }
+          : t,
+      );
+      await Promise.all(
+        updatedTrips.filter((t) => affectedTripIds.includes(t.id)).map((t) => store.saveTrip(t)),
+      );
       set((s) => ({
         places: s.places.filter((p) => p.id !== id),
-        trips: s.trips.map((t) =>
-          t.placeIds.includes(id)
-            ? { ...t, placeIds: t.placeIds.filter((pid) => pid !== id), needsReview: true }
-            : t,
-        ),
+        trips: updatedTrips,
         selectedPlaceId: s.selectedPlaceId === id ? null : s.selectedPlaceId,
         tripSelection: s.tripSelection.filter((pid) => pid !== id),
       }));
-      persist();
+      return { affectedTripIds };
+    },
+
+    async addRoute(input) {
+      const route = { ...input, id: newId('route') } as Route;
+      const saved = await store.saveRoute(route);
+      set((s) => ({ routes: [...s.routes, saved] }));
+      return saved;
+    },
+
+    async updateRoute(id, patch) {
+      const current = get().routes.find((r) => r.id === id);
+      if (!current) return;
+      const next = { ...current, ...patch } as Route;
+      const saved = await store.saveRoute(next);
+      set((s) => ({ routes: s.routes.map((r) => (r.id === id ? saved : r)) }));
+    },
+
+    async removeRoute(id) {
+      await store.deleteRoute(id);
+      const affectedTripIds = get()
+        .trips.filter((t) => t.routeIds.includes(id))
+        .map((t) => t.id);
+      const updatedTrips = get().trips.map((t) =>
+        t.routeIds.includes(id)
+          ? { ...t, routeIds: t.routeIds.filter((rid) => rid !== id), needsReview: true }
+          : t,
+      );
+      await Promise.all(
+        updatedTrips.filter((t) => affectedTripIds.includes(t.id)).map((t) => store.saveTrip(t)),
+      );
+      set((s) => ({
+        routes: s.routes.filter((r) => r.id !== id),
+        trips: updatedTrips,
+        selectedPlaceId: s.selectedPlaceId === id ? null : s.selectedPlaceId,
+        tripRouteSelection: s.tripRouteSelection.filter((rid) => rid !== id),
+      }));
       return { affectedTripIds };
     },
 
@@ -136,30 +202,42 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     async replaceAll(data) {
-      set({ places: data.places, trips: data.trips });
-      await store.save(snapshot(get()));
+      const persisted = await store.import(data, 'replace');
+      set({ places: persisted.places, routes: persisted.routes, trips: persisted.trips });
     },
 
     async mergeIn(data) {
-      const merged = store.merge(snapshot(get()), data);
-      set({ places: merged.places, trips: merged.trips });
-      await store.save(merged);
+      const persisted = await store.import(data, 'merge');
+      set({ places: persisted.places, routes: persisted.routes, trips: persisted.trips });
     },
 
-    addToTrip(placeId) {
-      set((s) =>
-        s.tripSelection.includes(placeId)
-          ? s
-          : { tripSelection: [...s.tripSelection, placeId] },
-      );
+    addToTrip(id) {
+      const isRoute = get().routes.some((r) => r.id === id);
+      set((s) => {
+        if (isRoute) {
+          return s.tripRouteSelection.includes(id)
+            ? s
+            : { tripRouteSelection: [...s.tripRouteSelection, id] };
+        }
+        return s.tripSelection.includes(id) ? s : { tripSelection: [...s.tripSelection, id] };
+      });
     },
 
-    removeFromTrip(placeId) {
-      set((s) => ({ tripSelection: s.tripSelection.filter((id) => id !== placeId) }));
+    removeFromTrip(id) {
+      set((s) => ({
+        tripSelection: s.tripSelection.filter((pid) => pid !== id),
+        tripRouteSelection: s.tripRouteSelection.filter((rid) => rid !== id),
+      }));
     },
 
     clearTripSelection() {
-      set({ tripSelection: [], activeOrder: null, activeRoute: null, planError: null });
+      set({
+        tripSelection: [],
+        tripRouteSelection: [],
+        activeOrder: null,
+        activeRoute: null,
+        planError: null,
+      });
     },
 
     // ---- Trip planning (implemented in planTrip.ts, wired below) ----
@@ -185,18 +263,22 @@ export const useAppStore = create<AppState>((set, get) => {
       await runPlanTrip(set, get);
     },
 
-    saveTrip(name) {
+    async saveTrip(name) {
       const s = get();
       const trip: Trip = {
-        id: newId('trip'),
+        id: s.activeTripId ?? newId('trip'),
         name: name.trim() || 'Untitled trip',
         placeIds: [...s.tripSelection],
+        routeIds: [...s.tripRouteSelection],
         constraints: [...s.constraints],
         order: s.activeOrder ?? undefined,
         metrics: s.activeRoute ?? undefined,
       };
-      set((state) => ({ trips: [...state.trips, trip], activeTripId: trip.id }));
-      persist();
+      const saved = await store.saveTrip(trip);
+      set((state) => ({
+        trips: [...state.trips.filter((t) => t.id !== saved.id), saved],
+        activeTripId: saved.id,
+      }));
     },
 
     openTrip(tripId) {
@@ -204,6 +286,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!trip) return;
       set({
         tripSelection: [...trip.placeIds],
+        tripRouteSelection: [...trip.routeIds],
         constraints: [...trip.constraints],
         activeOrder: trip.order ?? null,
         activeRoute: trip.metrics ?? null,
@@ -212,30 +295,48 @@ export const useAppStore = create<AppState>((set, get) => {
       });
     },
 
-    deleteTrip(tripId) {
+    async deleteTrip(tripId) {
+      await store.deleteTrip(tripId);
       set((s) => ({
         trips: s.trips.filter((t) => t.id !== tripId),
         activeTripId: s.activeTripId === tripId ? null : s.activeTripId,
       }));
-      persist();
     },
   };
 });
 
-/** Collect all distinct tags across the catalog (for autocomplete). */
+/** Every place and route as a single entity list (for planning/selection). */
+export function selectAllEntities(state: AppState): CatalogEntity[] {
+  return [...state.places, ...state.routes];
+}
+
+/** Collect all distinct tags across places and routes (for autocomplete). */
 export function selectAllTags(state: AppState): string[] {
   const set = new Set<string>();
   for (const p of state.places) for (const t of p.tags) set.add(t);
+  for (const r of state.routes) for (const t of r.tags) set.add(t);
   return [...set].sort();
 }
 
-/** Places passing the active tag + status filters (map-visualization). */
+function passesFilter(entity: CatalogEntity, state: AppState): boolean {
+  if (state.filterStatus !== 'all' && entity.status !== state.filterStatus) return false;
+  if (state.filterTags.length > 0 && !state.filterTags.some((t) => entity.tags.includes(t))) {
+    return false;
+  }
+  return true;
+}
+
+/** Destination places passing the active tag + status filters (map markers + list). */
 export function selectFilteredPlaces(state: AppState): Place[] {
-  return state.places.filter((p) => {
-    if (state.filterStatus !== 'all' && p.status !== state.filterStatus) return false;
-    if (state.filterTags.length > 0 && !state.filterTags.some((t) => p.tags.includes(t))) {
-      return false;
-    }
-    return true;
-  });
+  return state.places.filter((p) => passesFilter(p, state));
+}
+
+/** Routes passing the active tag + status filters (map polylines + list). */
+export function selectFilteredRoutes(state: AppState): Route[] {
+  return state.routes.filter((r) => passesFilter(r, state));
+}
+
+/** Places and routes passing the active filters, combined (catalog list). */
+export function selectFilteredEntities(state: AppState): CatalogEntity[] {
+  return [...selectFilteredPlaces(state), ...selectFilteredRoutes(state)];
 }

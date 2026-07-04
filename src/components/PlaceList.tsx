@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import type { Place } from '../types';
+import type { CatalogEntity } from '../types';
 import { useAppStore } from '../store/appStore';
 import { PlaceForm } from './PlaceForm';
 
-function StatusBadge({ place }: { place: Place }) {
+function StatusBadge({ place }: { place: CatalogEntity }) {
   if (place.status === 'visited') {
     return (
       <span className="badge-visited">
@@ -14,21 +14,29 @@ function StatusBadge({ place }: { place: Place }) {
   return <span className="badge-wishlist">想去</span>;
 }
 
-function PlaceRow({ place }: { place: Place }) {
+function PlaceRow({ place }: { place: CatalogEntity }) {
   const [editing, setEditing] = useState(false);
   const removePlace = useAppStore((s) => s.removePlace);
+  const removeRoute = useAppStore((s) => s.removeRoute);
   const selectPlace = useAppStore((s) => s.selectPlace);
   const addToTrip = useAppStore((s) => s.addToTrip);
-  const inTrip = useAppStore((s) => s.tripSelection.includes(place.id));
+  const inTrip = useAppStore(
+    (s) => s.tripSelection.includes(place.id) || s.tripRouteSelection.includes(place.id),
+  );
 
   const handleDelete = (): void => {
-    const trips = useAppStore.getState().trips.filter((t) => t.placeIds.includes(place.id));
+    const idKey = place.kind === 'road' ? 'routeIds' : 'placeIds';
+    const trips = useAppStore.getState().trips.filter((t) => t[idKey].includes(place.id));
     const msg =
       trips.length > 0
         ? `“${place.name}”被 ${trips.length} 个行程使用。删除它并将这些行程标记为待检查？`
         : `删除“${place.name}”？`;
     if (window.confirm(msg)) {
-      removePlace(place.id);
+      if (place.kind === 'road') {
+        void removeRoute(place.id);
+      } else {
+        void removePlace(place.id);
+      }
     }
   };
 
@@ -79,8 +87,8 @@ function PlaceRow({ place }: { place: Place }) {
   );
 }
 
-/** Renders the catalog as a list of place cards. `places` is pre-filtered by the caller. */
-export function PlaceList({ places }: { places: Place[] }) {
+/** Renders the catalog as a list of place/route cards. `places` is pre-filtered by the caller. */
+export function PlaceList({ places }: { places: CatalogEntity[] }) {
   if (places.length === 0) {
     return <p className="muted">还没有地点。在上方添加一个，即可在地图上显示。</p>;
   }

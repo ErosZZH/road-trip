@@ -1,10 +1,4 @@
-# trip-planner Specification
-
-## Purpose
-
-Selecting candidate places and computing an optimized home-anchored cyclic route with must-include tag constraints and distance/duration metrics; saving and reopening trips.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Select candidate places and routes for a trip
 
@@ -50,29 +44,6 @@ that yields a shorter loop).
 - **THEN** the system returns a trivial loop (home, optionally the single entity, and back)
   and does not error
 
-### Requirement: Enforce must-include tag constraints
-
-The system SHALL allow the user to specify tag constraints that a valid plan must satisfy — for example, "the trip must include at least one place tagged `drifting`" — and SHALL report when a selection cannot satisfy them.
-
-#### Scenario: Constraint satisfied
-
-- **WHEN** the user requires at least one place with a given tag and the selection contains such a place
-- **THEN** the system computes the route and indicates that the constraint is satisfied
-
-#### Scenario: Constraint not satisfiable
-
-- **WHEN** the user requires at least one place with a given tag but no selected place carries that tag
-- **THEN** the system does not present the plan as valid and prompts the user to add a place with the required tag or relax the constraint
-
-### Requirement: Show route metrics
-
-The system SHALL display total distance and estimated duration for a computed route, plus per-leg distance between consecutive stops.
-
-#### Scenario: Display totals and legs
-
-- **WHEN** an optimized route is computed
-- **THEN** the system shows the total distance and estimated total driving time, and the distance for each leg between consecutive stops
-
 ### Requirement: Save and reopen trips
 
 The system SHALL allow the user to save a planned trip with a name to the trips folder and
@@ -89,3 +60,8 @@ reopen it later with its selection, constraints, and computed loop.
 - **WHEN** the user opens a previously saved trip
 - **THEN** the system restores its selection and constraints and re-displays the loop on the
   map
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Select candidate places for a trip`
+- TO: `### Requirement: Select candidate places and routes for a trip`
