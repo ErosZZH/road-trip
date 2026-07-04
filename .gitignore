@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+coverage/
+
+# TypeScript / Vite build artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Playwright MCP scratch output
+.playwright-mcp/
+
+# Local env files (keep your Baidu AK private)
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+*.local
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea/
