@@ -27,20 +27,27 @@ function destinationNode(place: Place): PlanNode {
   return { placeId: place.id, kind: 'destination', arrive: place.coord, depart: place.coord };
 }
 
+/**
+ * A cost function between two points, in the optimizer's objective units.
+ * Defaults to great-circle distance in meters, but the planner can inject a
+ * real driving-*duration* function so the tour minimizes drive time instead.
+ */
+export type CostFn = (a: BD09, b: BD09) => number;
+
 /** Distance in meters travelled from one node's departure to the next node's arrival. */
-export function legCost(from: PlanNode, to: PlanNode): number {
-  return haversineMeters(from.depart, to.arrive);
+export function legCost(from: PlanNode, to: PlanNode, cost: CostFn = haversineMeters): number {
+  return cost(from.depart, to.arrive);
 }
 
 /** Total cost of a home-anchored cyclic tour visiting nodes in order. */
-export function tourCost(home: BD09, nodes: PlanNode[]): number {
+export function tourCost(home: BD09, nodes: PlanNode[], cost: CostFn = haversineMeters): number {
   if (nodes.length === 0) return 0;
   const homeNode: PlanNode = { placeId: '@home', kind: 'destination', arrive: home, depart: home };
-  let total = legCost(homeNode, nodes[0]!);
+  let total = legCost(homeNode, nodes[0]!, cost);
   for (let i = 0; i < nodes.length - 1; i += 1) {
-    total += legCost(nodes[i]!, nodes[i + 1]!);
+    total += legCost(nodes[i]!, nodes[i + 1]!, cost);
   }
-  total += legCost(nodes[nodes.length - 1]!, homeNode);
+  total += legCost(nodes[nodes.length - 1]!, homeNode, cost);
   return total;
 }
 
@@ -49,7 +56,7 @@ export function tourCost(home: BD09, nodes: PlanNode[]): number {
  * exit→entry) that minimizes the combined in+out cost relative to its
  * neighbors. Greedy but effective for the small tours we handle.
  */
-function orientRoads(home: BD09, order: PlanNode[]): PlanNode[] {
+function orientRoads(home: BD09, order: PlanNode[], cost: CostFn): PlanNode[] {
   const homeNode: PlanNode = { placeId: '@home', kind: 'destination', arrive: home, depart: home };
   const result = [...order];
   for (let i = 0; i < result.length; i += 1) {
@@ -65,15 +72,15 @@ function orientRoads(home: BD09, order: PlanNode[]): PlanNode[] {
       arrive: node.depart,
       depart: node.arrive,
     };
-    const costA = haversineMeters(prev.depart, a.arrive) + haversineMeters(a.depart, next.arrive);
-    const costB = haversineMeters(prev.depart, b.arrive) + haversineMeters(b.depart, next.arrive);
+    const costA = cost(prev.depart, a.arrive) + cost(a.depart, next.arrive);
+    const costB = cost(prev.depart, b.arrive) + cost(b.depart, next.arrive);
     result[i] = costB < costA ? b : a;
   }
   return result;
 }
 
 /** Nearest-neighbor construction starting from home. */
-function nearestNeighbor(home: BD09, nodes: PlanNode[]): PlanNode[] {
+function nearestNeighbor(home: BD09, nodes: PlanNode[], cost: CostFn): PlanNode[] {
   const remaining = [...nodes];
   const order: PlanNode[] = [];
   let currentDepart = home;
@@ -81,9 +88,9 @@ function nearestNeighbor(home: BD09, nodes: PlanNode[]): PlanNode[] {
     let bestIdx = 0;
     let bestCost = Infinity;
     for (let i = 0; i < remaining.length; i += 1) {
-      const cost = haversineMeters(currentDepart, remaining[i]!.arrive);
-      if (cost < bestCost) {
-        bestCost = cost;
+      const c = cost(currentDepart, remaining[i]!.arrive);
+      if (c < bestCost) {
+        bestCost = c;
         bestIdx = i;
       }
     }
@@ -95,9 +102,9 @@ function nearestNeighbor(home: BD09, nodes: PlanNode[]): PlanNode[] {
 }
 
 /** 2-opt local search: reverse segments while it reduces total tour cost. */
-function twoOpt(home: BD09, initial: PlanNode[]): PlanNode[] {
-  let best = orientRoads(home, initial);
-  let bestCost = tourCost(home, best);
+function twoOpt(home: BD09, initial: PlanNode[], cost: CostFn): PlanNode[] {
+  let best = orientRoads(home, initial, cost);
+  let bestCost = tourCost(home, best, cost);
   let improved = true;
   const n = best.length;
 
@@ -106,11 +113,11 @@ function twoOpt(home: BD09, initial: PlanNode[]): PlanNode[] {
     for (let i = 0; i < n - 1; i += 1) {
       for (let k = i + 1; k < n; k += 1) {
         const candidate = best.slice(0, i).concat(best.slice(i, k + 1).reverse(), best.slice(k + 1));
-        const oriented = orientRoads(home, candidate);
-        const cost = tourCost(home, oriented);
-        if (cost + 1e-6 < bestCost) {
+        const oriented = orientRoads(home, candidate, cost);
+        const c = tourCost(home, oriented, cost);
+        if (c + 1e-6 < bestCost) {
           best = oriented;
-          bestCost = cost;
+          bestCost = c;
           improved = true;
         }
       }
@@ -121,7 +128,7 @@ function twoOpt(home: BD09, initial: PlanNode[]): PlanNode[] {
 
 export interface OptimizeResult {
   order: RouteStop[];
-  /** Straight-line total distance in meters (optimization objective). */
+  /** Total tour cost in the objective's units (meters by default, else injected). */
   estimatedMeters: number;
 }
 
@@ -130,8 +137,15 @@ export interface OptimizeResult {
  * - 0 entities → empty order.
  * - 1 entity → trivial there-and-back.
  * - ≥2 entities → nearest-neighbor + 2-opt, with per-route orientation.
+ *
+ * `cost` defaults to great-circle distance; the planner injects a real
+ * driving-duration function so the tour minimizes drive *time* (quickest loop).
  */
-export function optimizeRoute(home: BD09, entities: CatalogEntity[]): OptimizeResult {
+export function optimizeRoute(
+  home: BD09,
+  entities: CatalogEntity[],
+  cost: CostFn = haversineMeters,
+): OptimizeResult {
   if (entities.length === 0) return { order: [], estimatedMeters: 0 };
 
   // Build initial nodes: destinations fixed; routes default to entry→exit.
@@ -140,13 +154,13 @@ export function optimizeRoute(home: BD09, entities: CatalogEntity[]): OptimizeRe
   );
 
   if (entities.length === 1) {
-    const oriented = orientRoads(home, nodes);
-    return { order: toStops(oriented, entities), estimatedMeters: tourCost(home, oriented) };
+    const oriented = orientRoads(home, nodes, cost);
+    return { order: toStops(oriented, entities), estimatedMeters: tourCost(home, oriented, cost) };
   }
 
-  const nn = nearestNeighbor(home, nodes);
-  const optimized = twoOpt(home, nn);
-  return { order: toStops(optimized, entities), estimatedMeters: tourCost(home, optimized) };
+  const nn = nearestNeighbor(home, nodes, cost);
+  const optimized = twoOpt(home, nn, cost);
+  return { order: toStops(optimized, entities), estimatedMeters: tourCost(home, optimized, cost) };
 }
 
 function toStops(nodes: PlanNode[], entities: CatalogEntity[]): RouteStop[] {

@@ -164,9 +164,17 @@ export function useMap(
     const drawn: OverlayHandle[] = [];
     for (const leg of route.legs) {
       const path: BD09[] = leg.path.length >= 2 ? leg.path : [];
-      if (path.length >= 2) {
-        drawn.push(provider.addPolyline(map, { path, color: '#2563eb', weight: 5 }));
-      }
+      if (path.length < 2) continue;
+      // Scenic road bodies are drawn in the scenic purple (matching route
+      // overlays); connectors between stops use the trip blue.
+      const isRoad = leg.kind === 'road';
+      drawn.push(
+        provider.addPolyline(map, {
+          path,
+          color: isRoad ? '#7c3aed' : '#2563eb',
+          weight: isRoad ? 6 : 5,
+        }),
+      );
     }
     // Fit the viewport to the whole route.
     const allPoints = route.legs.flatMap((l) => l.path);

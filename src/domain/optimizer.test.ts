@@ -118,3 +118,28 @@ describe('optimizeRoute — mixed destinations and roads', () => {
     expect(new Set(res.order.map((s) => s.placeId))).toEqual(new Set(['a', 'r', 'b']));
   });
 });
+
+describe('optimizeRoute — injected cost function', () => {
+  it('orders by the injected cost (drive time), overriding great-circle distance', () => {
+    // Geographically, x sits between HOME and y. By straight-line distance the
+    // natural order is HOME → x → y → HOME. But if x is (say) across a river with
+    // a slow connection, a drive-*time* cost can prefer visiting y first.
+    const x = dest('x', 120.8, 31.35);
+    const y = dest('y', 121.4, 31.9);
+
+    // Custom cost: make any leg touching x expensive except straight from y.
+    const cost = (a: BD09, b: BD09): number => {
+      const near = (p: BD09, q: BD09) => Math.abs(p.lng - q.lng) < 1e-6 && Math.abs(p.lat - q.lat) < 1e-6;
+      // Cheap: HOME→y and y→x; expensive: HOME→x.
+      if (near(a, HOME) && near(b, x.coord)) return 1000;
+      return Math.abs(a.lng - b.lng) + Math.abs(a.lat - b.lat);
+    };
+
+    const byDistance = optimizeRoute(HOME, [x, y]).order.map((s) => s.placeId);
+    const byCost = optimizeRoute(HOME, [x, y], cost).order.map((s) => s.placeId);
+
+    // The injected cost pushes y ahead of x, unlike the distance-based ordering.
+    expect(byCost.indexOf('y')).toBeLessThan(byCost.indexOf('x'));
+    expect(byCost).not.toEqual(byDistance);
+  });
+});

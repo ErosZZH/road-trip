@@ -9,6 +9,13 @@ declare global {
     BMapGL?: typeof BMapGL;
     /** JSONP callback hook invoked by the Baidu loader when the SDK is ready. */
     __onBMapGLReady?: () => void;
+    /**
+     * Driving-policy constants, exposed as globals once the BMapGL SDK loads.
+     * Names/values verified live against this SDK build. `DESTANCE` is Baidu's
+     * own (mis-spelled) constant for least-distance.
+     */
+    BMAP_DRIVING_POLICY_TIME_PRIORITY?: number;
+    BMAP_DRIVING_POLICY_DESTANCE?: number;
   }
 
   namespace BMapGL {
@@ -101,6 +108,7 @@ declare global {
         location: Map | Point | string,
         opts?: {
           renderOptions?: { map?: Map; autoViewport?: boolean };
+          policy?: number;
           onSearchComplete?: (results: DrivingRouteResult) => void;
         },
       );

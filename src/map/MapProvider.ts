@@ -9,6 +9,20 @@ export interface GeocodeCandidate {
   context?: string;
 }
 
+/**
+ * Driving-route planning strategy.
+ * - `quickest`: least travel time (uses highways when they're faster).
+ * - `shortest`: least distance.
+ * The provider maps these to its native policy constants, falling back to the
+ * provider default (already time-optimal) when a constant is unavailable.
+ */
+export type DrivingPolicy = 'quickest' | 'shortest';
+
+/** Options for a driving-route request. */
+export interface DrivingRouteOptions {
+  policy?: DrivingPolicy;
+}
+
 /** Result of a driving-route request between two points. */
 export interface DrivingRouteResult {
   distanceMeters: number;
@@ -64,8 +78,8 @@ export interface MapProvider {
   addPolyline(map: MapHandle, options: PolylineOptions): OverlayHandle;
   /** Geocode a free-text query to candidate coordinates. */
   geocode(query: string): Promise<GeocodeCandidate[]>;
-  /** Compute a driving route between two points. */
-  drivingRoute(from: BD09, to: BD09): Promise<DrivingRouteResult>;
+  /** Compute a driving route between two points, optionally with a routing policy. */
+  drivingRoute(from: BD09, to: BD09, options?: DrivingRouteOptions): Promise<DrivingRouteResult>;
 }
 
 /** Thrown when the provider cannot operate (e.g. missing API key). */

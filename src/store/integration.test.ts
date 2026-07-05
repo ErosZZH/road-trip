@@ -1,14 +1,23 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock the map provider so planTrip runs without a live Baidu SDK. The mock
-// returns straight-line-ish driving results so metrics are populated.
+// returns straight-line-ish driving results (distance & duration derived from the
+// coordinate delta) so metrics — and drive-time ordering — are populated. The
+// third `opts` arg (policy) is accepted and ignored.
 vi.mock('../map', () => ({
   getMapProvider: () => ({
-    drivingRoute: async (from: { lng: number; lat: number }, to: { lng: number; lat: number }) => ({
-      distanceMeters: Math.abs(from.lng - to.lng) * 100000 + Math.abs(from.lat - to.lat) * 100000,
-      durationSeconds: 3600,
-      path: [from, to],
-    }),
+    drivingRoute: async (
+      from: { lng: number; lat: number },
+      to: { lng: number; lat: number },
+      _opts?: { policy?: string },
+    ) => {
+      const meters = Math.abs(from.lng - to.lng) * 100000 + Math.abs(from.lat - to.lat) * 100000;
+      return {
+        distanceMeters: meters,
+        durationSeconds: meters / 16.7, // ~60 km/h
+        path: [from, to],
+      };
+    },
   }),
 }));
 
@@ -206,6 +215,46 @@ describe('integration: catalog → plan → save → reopen', () => {
     const order = useAppStore.getState().activeOrder;
     expect(order).not.toBeNull();
     expect(order!.map((o) => o.placeId).sort()).toEqual([p.id, r.id].sort());
+  });
+
+  it('draws a scenic road along its own geometry as a road-kind leg', async () => {
+    const s = useAppStore.getState();
+    const p = await s.addPlace({
+      kind: 'destination',
+      name: '莫干山',
+      tags: ['山岳'],
+      status: 'wishlist',
+      coord: { lng: 119.87, lat: 30.6 },
+    });
+    const r = await useAppStore.getState().addRoute({
+      kind: 'road',
+      name: '皖南川藏线',
+      tags: ['风景道'],
+      status: 'wishlist',
+      entry: { lng: 118.96, lat: 30.63 },
+      exit: { lng: 118.46, lat: 30.66 },
+      path: [
+        { lng: 118.96, lat: 30.63 },
+        { lng: 118.7, lat: 30.58 },
+        { lng: 118.46, lat: 30.66 },
+      ],
+    });
+    useAppStore.getState().addToTrip(p.id);
+    useAppStore.getState().addToTrip(r.id);
+
+    await useAppStore.getState().planTrip();
+    const route = useAppStore.getState().activeRoute;
+    expect(route).not.toBeNull();
+    // No fallback: real per-leg geometry was produced.
+    expect(useAppStore.getState().planError).toBeNull();
+
+    const roadLegs = route!.legs.filter((l) => l.kind === 'road');
+    expect(roadLegs).toHaveLength(1);
+    expect(roadLegs[0]!.name).toBe('皖南川藏线');
+    // The scenic body is drawn along its stored 3-point geometry (respect the road).
+    expect(roadLegs[0]!.path.length).toBeGreaterThanOrEqual(3);
+    expect(roadLegs[0]!.fromId).toBe(r.id);
+    expect(roadLegs[0]!.toId).toBe(r.id);
   });
 
   it('saves a trip and reopens it, restoring selection and constraints', async () => {

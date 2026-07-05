@@ -26,7 +26,15 @@ function Metrics({ metrics }: { metrics: RouteMetrics }) {
       <ol className="stack" style={{ margin: 0, paddingLeft: 18 }}>
         {metrics.legs.map((leg, i) => (
           <li key={i} className="muted">
-            {label(leg.fromId)} → {label(leg.toId)} · {formatKm(leg.distanceMeters)}
+            {leg.kind === 'road' ? (
+              <>
+                🛣 {leg.name ?? label(leg.fromId)} · {formatKm(leg.distanceMeters)}
+              </>
+            ) : (
+              <>
+                {label(leg.fromId)} → {label(leg.toId)} · {formatKm(leg.distanceMeters)}
+              </>
+            )}
           </li>
         ))}
       </ol>

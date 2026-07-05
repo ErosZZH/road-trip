@@ -82,6 +82,14 @@ export interface RouteLeg {
   durationSeconds: number;
   /** Ordered path points (BD09) for drawing the leg on the map. */
   path: BD09[];
+  /**
+   * What this leg represents:
+   * - `connector` (default): quickest driving route between two stops/home.
+   * - `road`: the body of a scenic route, drawn along its own scenic geometry.
+   */
+  kind?: 'connector' | 'road';
+  /** Display name for a `road` leg (the scenic route's name). */
+  name?: string;
 }
 
 /** Aggregate metrics for a computed route. */
